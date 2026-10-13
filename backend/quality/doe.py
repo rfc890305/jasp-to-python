@@ -279,7 +279,10 @@ def analyze_design(
 
     X = np.column_stack([np.ones(len(y))] + [coded[list(t)].prod(axis=1).to_numpy() for t in terms])
     if np.linalg.matrix_rank(X) < X.shape[1]:
-        raise ValueError("Termos confundidos (aliases) no modelo; reduza a ordem das interações.")
+        raise ValueError(
+            "Termos confundidos (aliases) no modelo: reduza a ordem das interações ou, para termos "
+            "quadráticos, use um planejamento com pontos axiais (CCD ou Box-Behnken)."
+        )
     n, k = X.shape
     xtx_inv = np.linalg.inv(X.T @ X)
     beta = xtx_inv @ X.T @ y
