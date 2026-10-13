@@ -1,0 +1,72 @@
+name: Deploy Cloud Run
+
+# Publica o app no Google Cloud Run a cada push na main (e sob demanda).
+# Só roda depois que as variáveis do repositório forem configuradas;
+# o passo a passo está em docs/deploy-cloud-run.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloud-run
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'jasp-to-pyhton' }}
+  REGION: ${{ vars.GCP_REGION || 'southamerica-east1' }}
+  SERVICE: ${{ vars.CLOUD_RUN_SERVICE || 'jasp-to-python' }}
+  REPOSITORY: ${{ vars.GAR_REPOSITORY || 'jasp-to-python' }}
+
+jobs:
+  deploy:
+    if: vars.GCP_WIF_PROVIDER != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # necessário para a autenticação sem chave (Workload Identity)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Testes
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+      - name: Autenticar no Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build e push da imagem
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy no Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}
+          flags: >-
+            --allow-unauthenticated
+            --memory=1Gi
+            --cpu=1
+            --min-instances=0
+            --max-instances=3
+
+      - name: URL publicada
+        run: echo "App no ar em ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
