@@ -16,3 +16,19 @@ jobs:
           cache: pip
       - run: pip install -r requirements-dev.txt
       - run: pytest -q
+
+  docker:
+    # Garante que a imagem do Cloud Run continua montando a cada PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t jasp-to-python:ci .
+      - name: Sobe o container e testa a página inicial
+        run: |
+          docker run -d --rm -p 8080:8080 --name app jasp-to-python:ci
+          for i in $(seq 1 20); do
+            curl -fsS http://localhost:8080/ > /dev/null && exit 0
+            sleep 1
+          done
+          docker logs app
+          exit 1

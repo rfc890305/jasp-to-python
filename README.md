@@ -27,6 +27,8 @@ docs/
   como-migrar-modulo.md Passo a passo para converter um arquivo R do JASP
   manual/               Manual das funcionalidades com aplicação Six Sigma
   comparacao-minitab.md Matriz Minitab × JASP × este projeto
+  deploy-cloud-run.md   Publicação no Google Cloud Run
+scripts/gcp-setup.sh    Configuração única do Google Cloud para o deploy
 Dockerfile              Imagem para o Google Cloud Run
 ```
 
@@ -41,8 +43,14 @@ python app.py     # http://localhost:8050
 
 ## Deploy no Cloud Run
 
+O deploy é automático pelo GitHub Actions a cada push na `main`, depois de uma
+configuração única no Google Cloud. Passo a passo em
+[docs/deploy-cloud-run.md](docs/deploy-cloud-run.md).
+
+Deploy manual, direto do Cloud Shell:
+
 ```bash
-gcloud run deploy jasp-to-python --source . --region southamerica-east1 --allow-unauthenticated
+gcloud run deploy jasp-to-python --source . --region southamerica-east1 --allow-unauthenticated --memory 1Gi
 ```
 
 O `Dockerfile` usa `gunicorn app:server` e respeita a variável `PORT` definida pelo Cloud Run.
