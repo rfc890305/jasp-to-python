@@ -15,13 +15,16 @@ Status: ✅ migrado · 🟡 parcial · ⬜ não iniciado
 | Carta I-MR | `backend/quality/control_charts.py` | ✅ |
 | Carta Xbarra-R | `backend/quality/control_charts.py` | ✅ |
 | Carta Xbarra-S | | ⬜ |
-| Cartas por atributos (p, np, c, u, Laney) | | ⬜ |
+| Cartas por atributos (p, np, c, u, Laney) | `backend/quality/attribute_charts.py` | ✅ |
 | Cartas ponderadas no tempo (EWMA, CUSUM) | | ⬜ |
 | Regras de Nelson / Western Electric (1 a 8) | `nelson_rules` | 🟡 regras 1 a 3 |
-| MSA: Gauge R&R (cruzado / aninhado) | | ⬜ |
+| MSA: Gauge R&R cruzado (ANOVA, tipo 2 e tipo 3) | `backend/quality/msa.py` | ✅ |
+| MSA: Gauge R&R aninhado | | ⬜ |
 | MSA: linearidade e viés, estudo tipo 1 | | ⬜ |
 | MSA: concordância por atributos | | ⬜ |
-| DOE: fatorial, superfície de resposta | | ⬜ |
+| DOE: criar fatorial 2^k e 2^(k−p), CCD, Box-Behnken | `backend/quality/doe.py` | ✅ |
+| DOE: analisar fatorial e superfície de resposta | `analyze_design` | 🟡 sem blocos, covariáveis, fatores categóricos e otimizador de respostas |
+| DOE: Plackett-Burman, split-plot, gráficos fatoriais | | ⬜ |
 
 ## Fase 2: Estatística básica
 

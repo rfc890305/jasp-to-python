@@ -119,16 +119,16 @@ Lacunas que mais pesam num projeto Six Sigma (prioridade para desenvolver):
 |---|---|---|---|
 | Triagem: Plackett-Burman | 🟡 | jaspQualityControl tem `doeScreening.qml`, ainda fora do menu | ⬜ |
 | Triagem: Triagem Definitiva | 🟡 | `definitiveScreeningAnalysis.qml`, ainda fora do menu | ⬜ |
-| Fatorial: Criar 2 níveis (padrão e geradores) | ✅ | jaspQualityControl › Create Factorial Worksheet | ⬜ |
+| Fatorial: Criar 2 níveis (padrão e geradores) | ✅ | jaspQualityControl › Create Factorial Worksheet | ✅ `factorial_design` |
 | Fatorial: Fatorial completo geral | ✅ | Create Factorial Worksheet | ⬜ |
 | Fatorial: Parcelas subdivididas (split-plot) | ✅ | Create Factorial Worksheet | ⬜ |
 | Fatorial: Definir planejamento personalizado | 🟡 | Analyse Design aceita colunas existentes | ⬜ |
-| Fatorial: Analisar Planejamento | ✅ | jaspQualityControl › Analyse Design | ⬜ |
-| Fatorial: Gráfico de Pareto e normal dos efeitos | ✅ | Analyse Design | ⬜ |
+| Fatorial: Analisar Planejamento | ✅ | jaspQualityControl › Analyse Design | 🟡 `analyze_design` (sem blocos/covariáveis) |
+| Fatorial: Gráfico de Pareto e normal dos efeitos | ✅ | Analyse Design | 🟡 Pareto (com Lenth) |
 | Fatorial: Gráficos fatoriais (efeitos, interação, cubo) | ⬜ | | ⬜ |
-| Superfície de Resposta: Composto Central (CCD) | ✅ | Create Response Surface Worksheet | ⬜ |
-| Superfície de Resposta: Box-Behnken | ✅ | Create Response Surface Worksheet | ⬜ |
-| Superfície de Resposta: Analisar | ✅ | Analyse Design | ⬜ |
+| Superfície de Resposta: Composto Central (CCD) | ✅ | Create Response Surface Worksheet | ✅ `central_composite_design` |
+| Superfície de Resposta: Box-Behnken | ✅ | Create Response Surface Worksheet | ✅ `box_behnken_design` |
+| Superfície de Resposta: Analisar | ✅ | Analyse Design | 🟡 `analyze_design(model="quadratic")` com ponto estacionário |
 | Gráficos de Contorno e Superfície | ✅ | Analyse Design | ⬜ |
 | Otimizador de Respostas (desejabilidade) | ✅ | Analyse Design › Response optimizer | ⬜ |
 | Misturas (simplex, vértices extremos) | ⬜ | | ⬜ |
@@ -148,12 +148,12 @@ Lacunas que mais pesam num projeto Six Sigma (prioridade para desenvolver):
 | Carta de Zona | ⬜ | | ⬜ |
 | I-MR | ✅ | jaspQualityControl › Variables Charts for Individuals (inclui autocorrelação) | ✅ `imr_chart` |
 | Z-MR | ⬜ | | ⬜ |
-| P | ✅ | jaspQualityControl › Control Charts for Attributes | ⬜ |
-| NP | ✅ | Control Charts for Attributes | ⬜ |
-| C | ✅ | Control Charts for Attributes | ⬜ |
-| U | ✅ | Control Charts for Attributes | ⬜ |
-| P' de Laney | ✅ | Control Charts for Attributes | ⬜ |
-| U' de Laney | ✅ | Control Charts for Attributes | ⬜ |
+| P | ✅ | jaspQualityControl › Control Charts for Attributes | ✅ `p_chart` |
+| NP | ✅ | Control Charts for Attributes | ✅ `np_chart` |
+| C | ✅ | Control Charts for Attributes | ✅ `c_chart` |
+| U | ✅ | Control Charts for Attributes | ✅ `u_chart` |
+| P' de Laney | ✅ | Control Charts for Attributes | ✅ `laney_p_chart` |
+| U' de Laney | ✅ | Control Charts for Attributes | ✅ `laney_u_chart` |
 | Média Móvel (MA) | ⬜ | | ⬜ |
 | EWMA | ✅ | jaspQualityControl › Time Weighted Charts | ⬜ |
 | CUSUM | ✅ | Time Weighted Charts | ⬜ |
@@ -184,7 +184,7 @@ Lacunas que mais pesam num projeto Six Sigma (prioridade para desenvolver):
 | Intervalos de Tolerância | ⬜ | | ⬜ |
 | Gráfico Sequencial do Medidor | 🟡 | Run chart dentro de Type 1 / Test-retest | ⬜ |
 | Linearidade e Tendência do Medidor | ✅ | jaspQualityControl › Type 4 Linearity Study | ⬜ |
-| R&R do Medidor (Cruzado) | ✅ | Type 2 and 3 Gauge r&R Study | ⬜ |
+| R&R do Medidor (Cruzado) | ✅ | Type 2 and 3 Gauge r&R Study | ✅ `gauge_rr_crossed` |
 | R&R do Medidor (Aninhado) | ✅ | Gauge r&R Study (Non-replicable Measurements) | ⬜ |
 | R&R do Medidor (Expandido) | ⬜ | | ⬜ |
 | Estudo Tipo 1 | ✅ | Type 1 Instrument Capability Study | ⬜ |
