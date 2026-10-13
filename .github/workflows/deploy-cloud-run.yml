@@ -14,14 +14,14 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'jasp-to-pyhton' }}
   REGION: ${{ vars.GCP_REGION || 'southamerica-east1' }}
   SERVICE: ${{ vars.CLOUD_RUN_SERVICE || 'jasp-to-python' }}
   REPOSITORY: ${{ vars.GAR_REPOSITORY || 'jasp-to-python' }}
 
 jobs:
   deploy:
-    if: vars.GCP_PROJECT_ID != ''
+    if: vars.GCP_WIF_PROVIDER != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read

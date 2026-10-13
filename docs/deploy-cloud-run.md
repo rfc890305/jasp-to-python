@@ -9,14 +9,14 @@ A autenticação usa **Workload Identity Federation**: o GitHub recebe um token
 temporário do Google a cada execução, então nenhuma chave JSON fica guardada no
 repositório nem nos secrets.
 
-Enquanto as variáveis abaixo não forem cadastradas, o workflow de deploy é
+Enquanto a variável `GCP_WIF_PROVIDER` não for cadastrada, o workflow de deploy é
 ignorado (não falha).
 
 ## O que você precisa ter
 
 | Item | Valor sugerido | Observação |
 |---|---|---|
-| Projeto no Google Cloud | o seu `PROJECT_ID` | com faturamento ativado (o Cloud Run tem cota gratuita mensal) |
+| Projeto no Google Cloud | `jasp-to-pyhton` | com faturamento ativado (o Cloud Run tem cota gratuita mensal); é o padrão do script e do workflow |
 | Região | `southamerica-east1` (São Paulo) | pode trocar pela variável `GCP_REGION` |
 | Nome do serviço | `jasp-to-python` | opcional: variável `CLOUD_RUN_SERVICE` |
 | Repositório de imagens | `jasp-to-python` (Artifact Registry) | opcional: variável `GAR_REPOSITORY` |
@@ -29,7 +29,7 @@ ignorado (não falha).
    ```bash
    git clone https://github.com/rfc890305/jasp-to-python.git
    cd jasp-to-python
-   PROJECT_ID=<seu-projeto> bash scripts/gcp-setup.sh
+   bash scripts/gcp-setup.sh   # usa o projeto jasp-to-pyhton
    ```
 
 O script [`scripts/gcp-setup.sh`](../scripts/gcp-setup.sh) faz o seguinte (e pode
@@ -52,10 +52,10 @@ crie (são *variables*, não *secrets*, porque nenhum desses valores é sigiloso
 
 | Variável | Exemplo |
 |---|---|
-| `GCP_PROJECT_ID` | `meu-projeto-123` |
+| `GCP_PROJECT_ID` | `jasp-to-pyhton` |
 | `GCP_REGION` | `southamerica-east1` |
-| `GCP_WIF_PROVIDER` | `projects/123456789/locations/global/workloadIdentityPools/github/providers/github` |
-| `GCP_DEPLOY_SA` | `github-deployer@meu-projeto-123.iam.gserviceaccount.com` |
+| `GCP_WIF_PROVIDER` | `projects/<número do projeto>/locations/global/workloadIdentityPools/github/providers/github` |
+| `GCP_DEPLOY_SA` | `github-deployer@jasp-to-pyhton.iam.gserviceaccount.com` |
 
 ## Passo 3: publicar
 
@@ -78,7 +78,7 @@ workflow (por exemplo, troque `--allow-unauthenticated` por
 Para testar uma vez direto do Cloud Shell, sem configurar nada do passo 1:
 
 ```bash
-gcloud run deploy jasp-to-python --source . \
+gcloud run deploy jasp-to-python --source . --project jasp-to-pyhton \
   --region southamerica-east1 --allow-unauthenticated --memory 1Gi
 ```
 

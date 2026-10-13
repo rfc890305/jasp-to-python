@@ -2,13 +2,14 @@
 # Configuração única do Google Cloud para o deploy automático pelo GitHub Actions.
 # Rode no Cloud Shell (ou com o gcloud logado como dono do projeto):
 #
-#   PROJECT_ID=meu-projeto bash scripts/gcp-setup.sh
+#   bash scripts/gcp-setup.sh            # projeto padrão: jasp-to-pyhton
+#   PROJECT_ID=outro-projeto bash scripts/gcp-setup.sh
 #
 # Ao final, o script imprime as variáveis para cadastrar no GitHub.
 # Pode ser executado de novo sem problemas: o que já existe é mantido.
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:?defina PROJECT_ID=<id do projeto no Google Cloud>}"
+PROJECT_ID="${PROJECT_ID:-jasp-to-pyhton}"
 REGION="${REGION:-southamerica-east1}"
 GITHUB_REPO="${GITHUB_REPO:-rfc890305/jasp-to-python}"
 REPOSITORY="${REPOSITORY:-jasp-to-python}"   # repositório no Artifact Registry
