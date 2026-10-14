@@ -15,6 +15,7 @@
 | Medições individuais | I-MR |
 | Subgrupos de 2 a 10 | Xbarra-R |
 | Subgrupos maiores que 10 | Xbarra-S (⬜ a migrar) |
+| Contagens (defeituosos ou defeitos) | [Cartas por atributos](cartas-por-atributos.md) |
 
 ## Limites
 

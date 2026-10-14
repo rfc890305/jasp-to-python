@@ -19,8 +19,12 @@ backend/                Cálculos estatísticos puros, sem dependência de inter
   quality/              Controle de qualidade / Six Sigma (jaspQualityControl)
     capability.py       Cp, Cpk, Pp, Ppk, Cpm, PPM, nível sigma
     control_charts.py   Cartas I-MR e Xbarra-R, regras de Nelson
+    attribute_charts.py Cartas p, np, c, u e p'/u' de Laney
+    msa.py              Gage R&R cruzado (ANOVA)
+    doe.py              Criação (fatorial, CCD, Box-Behnken) e análise de experimentos
     constants.py        Constantes d2, A2, D3, D4
-tests/                  Testes (pytest) com valores calculados à mão
+tests/                  Testes (pytest) com valores calculados à mão ou dos testes do JASP
+  data/jasp/            Dados de referência copiados do jaspQualityControl
 data/                   Conjuntos de dados de exemplo
 docs/
   roadmap.md            Mapa de módulos JASP → Python e status
