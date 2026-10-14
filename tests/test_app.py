@@ -32,3 +32,26 @@ def test_paths_are_slugs():
 @pytest.mark.parametrize("path", ["/", "/nao-existe", *ITEMS])
 def test_every_route_renders(path):
     assert app.render(path) is not None
+
+
+def test_attribute_labels_follow_chart_type():
+    import pandas as pd
+
+    data = pd.read_csv(app.DATA_DIR / "teste_cartas_controle.csv").to_json(orient="split")
+    _, count, _, size, label, size_style, _ = app.attr_columns(data, "p")
+    assert (count, size, size_style) == ("Defeituosos", "Inspecionados", None)
+    assert "defeituosas" in label
+    _, count, _, _, label, size_style, help_ = app.attr_columns(data, "c")
+    assert count == "Defeitos" and "defeitos" in label
+    assert size_style == {"display": "none"} and "não usa tamanho" in help_
+
+
+def test_constant_sample_size_and_column_numbers():
+    import pandas as pd
+
+    data = pd.DataFrame({"mes": range(1, 13), "N_Acidentes": [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8]}).to_json(orient="split")
+    count_opts, count, size_opts, size, *_ = app.attr_columns(data, "u")
+    assert count_opts[1] == {"label": "C2 N_Acidentes", "value": "N_Acidentes"}
+    assert size == app.CONSTANT and size_opts[-1]["value"] == app.CONSTANT
+    _, fig, summary = app.attr_analyse(data, "u", "N_Acidentes", app.CONSTANT, 1)
+    assert len(fig.data) >= 4 and "Linha central" in str(summary)
