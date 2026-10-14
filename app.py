@@ -1,5 +1,8 @@
 """Interface web (Dash + Tailwind CSS) das análises migradas do JASP.
 
+A navegação segue os menus do Minitab (Calc, Estat, Gráfico), definidos em menu.py.
+Cada item com tela tem uma página aqui (PAGES); os demais aparecem como "em breve".
+
 Rodar localmente:  python app.py
 Produção (Cloud Run): gunicorn app:server
 """
@@ -16,6 +19,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, State, dcc, html
 
+from backend.descriptives import describe
 from backend.quality import (
     analyze_design,
     box_behnken_design,
@@ -30,12 +34,19 @@ from backend.quality import (
     np_chart,
     p_chart,
     u_chart,
+    xbar_r_chart,
 )
 from backend.quality.msa import gauge_rr_verdict
+from menu import ITEMS, MENU, Item, Node
 
 DATA_DIR = Path(__file__).parent / "data"
+MATRIX_URL = "https://github.com/rfc890305/jasp-to-python/blob/main/docs/comparacao-minitab.md"
+# Conjunto de exemplo carregado em cada página até o usuário enviar um CSV
 EXAMPLES = {
-    "var": DATA_DIR / "exemplo_diametro.csv",
+    "desc": DATA_DIR / "exemplo_diametro.csv",
+    "cap": DATA_DIR / "exemplo_diametro.csv",
+    "imr": DATA_DIR / "exemplo_diametro.csv",
+    "xbar": DATA_DIR / "exemplo_diametro.csv",
     "attr": DATA_DIR / "exemplo_atributos.csv",
     "msa": DATA_DIR / "exemplo_gage_rr.csv",
     "doe": DATA_DIR / "exemplo_doe.csv",
@@ -47,6 +58,12 @@ ATTRIBUTE_CHARTS = {
     "u": ("Carta u (defeitos por unidade)", u_chart, True),
     "laney_p": ("Carta p' de Laney", laney_p_chart, True),
     "laney_u": ("Carta u' de Laney", laney_u_chart, True),
+}
+DOE_DESIGNS = {"factorial": "Fatorial 2 níveis", "ccd": "Composto central (CCD)", "bbd": "Box-Behnken"}
+JASP_STATUS = {
+    "✅": "Existe no JASP: será migrado do módulo R correspondente.",
+    "🟡": "Existe em parte no JASP: parte será migrada e o restante desenvolvido.",
+    "⬜": "Não existe no JASP: será desenvolvido do zero em Python.",
 }
 FIG_LAYOUT = {"margin": {"l": 40, "r": 10, "t": 10, "b": 40}, "template": "plotly_white", "height": 360}
 
@@ -67,6 +84,10 @@ def _card(children, extra=""):
     return html.Div(children, className=f"bg-white rounded-xl shadow p-6 {extra}")
 
 
+def _section(title, *children):
+    return _card([html.H2(title, className="font-semibold mb-3"), *children])
+
+
 def _number_input(id_, label, value=None):
     return html.Label(
         [html.Span(label, className="block text-sm text-slate-600 mb-1"),
@@ -84,7 +105,7 @@ def _dropdown(id_, label, multi=False, options=None, value=None):
 
 
 def _data_panel(prefix):
-    """Upload de CSV + nome do conjunto; cada aba começa com o seu exemplo."""
+    """Upload de CSV + nome do conjunto; cada página começa com o seu exemplo."""
     return html.Div([
         html.H2("Dados", className="font-semibold mb-3"),
         dcc.Upload(
@@ -94,6 +115,17 @@ def _data_panel(prefix):
         ),
         html.P(id=f"{prefix}-name", className="text-xs text-slate-500 mb-4"),
         dcc.Store(id=f"{prefix}-data"),
+    ])
+
+
+def _graph(id_):
+    return dcc.Graph(id=id_, config={"displaylogo": False})
+
+
+def _two_columns(side, *main):
+    return html.Div(className="grid gap-6 md:grid-cols-3", children=[
+        html.Div(side, className="grid gap-6 content-start"),
+        html.Div(className="md:col-span-2 grid gap-6 content-start", children=list(main)),
     ])
 
 
@@ -117,7 +149,7 @@ def _error(exc):
     return html.P(str(exc), className="text-red-600")
 
 
-def _control_figure(chart: pd.DataFrame, name: str, violations: list[int]) -> go.Figure:
+def _control_figure(chart: pd.DataFrame, name: str, violations: list[int], height=None) -> go.Figure:
     fig = go.Figure()
     x = np.arange(1, len(chart) + 1)
     fig.add_scatter(x=x, y=chart["value"], mode="lines+markers", name=name)
@@ -128,89 +160,226 @@ def _control_figure(chart: pd.DataFrame, name: str, violations: list[int]) -> go
     if violations:
         fig.add_scatter(x=x[violations], y=chart["value"].iloc[violations], mode="markers", name="Fora de controle",
                         marker={"color": "red", "size": 11})
-    fig.update_layout(**FIG_LAYOUT)
+    fig.update_layout(**{**FIG_LAYOUT, **({"height": height} if height else {})})
     return fig
 
 
+def _out_of_limits(chart: pd.DataFrame) -> list[int]:
+    """Pontos além de LSC/LIC (teste 1), para as cartas de amplitude."""
+    value = chart["value"]
+    return [int(i) for i in np.where((value > chart["ucl"]) | (value < chart["lcl"]))[0]]
+
+
+def _violations_summary(center, v, unit="subgrupos"):
+    lines = [f"Linha central: {center:.4g}."]
+    lines.append(f"Pontos fora dos limites ({unit}): {', '.join(str(i + 1) for i in v['rule1'])}."
+                 if v["rule1"] else "Nenhum ponto fora dos limites.")
+    if v["rule2"]:
+        lines.append(f"Regra 2 (9 do mesmo lado), {unit}: {', '.join(str(i + 1) for i in v['rule2'])}.")
+    if v["rule3"]:
+        lines.append(f"Regra 3 (6 em tendência), {unit}: {', '.join(str(i + 1) for i in v['rule3'])}.")
+    return lines
+
+
 # ---------------------------------------------------------------------------
-# Layout
+# Menus no estilo do Minitab
 # ---------------------------------------------------------------------------
 
-variables_tab = html.Div(className="grid gap-6 md:grid-cols-3", children=[
-    _card([
-        _data_panel("var"),
-        _dropdown("column", "Variável"),
-        html.H2("Especificação", className="font-semibold mb-3"),
-        html.Div(className="grid grid-cols-3 gap-2", children=[
-            _number_input("lsl", "LSL", 9.85),
-            _number_input("target", "Alvo", 10.0),
-            _number_input("usl", "USL", 10.15),
-        ]),
-    ]),
-    html.Div(className="md:col-span-2 grid gap-6", children=[
-        _card([html.H2("Capacidade do processo", className="font-semibold mb-3"), html.Div(id="capability")]),
-        _card([html.H2("Carta de controle I-MR", className="font-semibold mb-3"),
-               dcc.Graph(id="imr", config={"displaylogo": False})]),
-    ]),
-])
+def _menu_link(item: Item, indent=False):
+    pad = "pl-6 pr-3" if indent else "px-3"
+    if item.page:
+        return dcc.Link(item.label, href=item.path,
+                        className=f"block {pad} py-1.5 whitespace-nowrap font-medium text-slate-900 hover:bg-sky-50")
+    return dcc.Link([item.label, html.Span("em breve", className="ml-2 text-[10px] uppercase text-slate-400")],
+                    href=item.path, className=f"block {pad} py-1.5 whitespace-nowrap text-slate-400 hover:bg-slate-50")
 
-attributes_tab = html.Div(className="grid gap-6 md:grid-cols-3", children=[
-    _card([
-        _data_panel("attr"),
-        _dropdown("attr-type", "Carta", options=[{"label": v[0], "value": k} for k, v in ATTRIBUTE_CHARTS.items()],
-                  value="p"),
-        _dropdown("attr-count", "Defeituosos / defeitos"),
-        _dropdown("attr-size", "Tamanho da amostra"),
-    ]),
-    html.Div(className="md:col-span-2", children=_card([
-        html.H2(id="attr-title", className="font-semibold mb-3"),
-        dcc.Graph(id="attr-graph", config={"displaylogo": False}),
-        html.Div(id="attr-summary", className="text-sm"),
-    ])),
-])
 
-msa_tab = html.Div(className="grid gap-6 md:grid-cols-3", children=[
-    _card([
-        _data_panel("msa"),
-        _dropdown("msa-part", "Peça"),
-        _dropdown("msa-operator", "Operador"),
-        _dropdown("msa-measure", "Medição"),
-        _number_input("msa-tol", "Tolerância (LSE − LIE, opcional)", 0.6),
-    ]),
-    html.Div(className="md:col-span-2 grid gap-6", children=[
-        _card([html.H2("Avaliação do sistema de medição", className="font-semibold mb-3"),
-               html.Div(id="msa-eval")]),
-        _card([html.H2("Componentes de variação", className="font-semibold mb-3"),
-               dcc.Graph(id="msa-graph", config={"displaylogo": False})]),
-        _card([html.H2("ANOVA", className="font-semibold mb-3"), html.Div(id="msa-anova")]),
-    ]),
-])
+def _flyout_entries(node: Node):
+    """Conteúdo de um submenu: itens e, quando houver, grupos com título."""
+    out = []
+    for child in node.children:
+        if isinstance(child, Item):
+            out.append(_menu_link(child))
+        else:
+            out.append(html.Div(child.label, className="px-3 pt-3 pb-1 text-xs font-semibold text-slate-500"))
+            out += [_menu_link(grand, indent=True) for grand in child.children]
+    return out
 
-doe_tab = html.Div(className="grid gap-6 md:grid-cols-3", children=[
-    html.Div(className="grid gap-6 content-start", children=[
+
+def _dropdown_entry(child):
+    if isinstance(child, Item):
+        return _menu_link(child)
+    return html.Div(className="group/sub", children=[
+        html.Div([html.Span(child.label), html.Span("›", className="ml-4 text-slate-400")], tabIndex=0,
+                 className="flex justify-between px-3 py-1.5 whitespace-nowrap cursor-default "
+                           "group-hover/sub:bg-slate-100 group-focus-within/sub:bg-slate-100"),
+        html.Div(_flyout_entries(child),
+                 # No celular o submenu abre logo abaixo; em telas maiores, ao lado
+                 className="hidden group-hover/sub:block group-focus-within/sub:block bg-slate-50 py-1 "
+                           "md:absolute md:left-full md:top-0 md:min-w-[16rem] md:max-h-[80vh] md:overflow-y-auto "
+                           "md:bg-white md:rounded-r md:shadow-lg md:border"),
+    ])
+
+
+def _menu_bar():
+    menus = []
+    for menu in MENU:
+        flat = all(isinstance(c, Item) for c in menu.children)
+        panel_cls = ("hidden group-hover:block group-focus-within:block absolute left-0 top-full z-50 min-w-[16rem] "
+                     "bg-white text-slate-800 rounded-b shadow-lg border py-1")
+        menus.append(html.Div(className="group relative", children=[
+            html.Button(menu.label, className="px-4 py-2 hover:bg-slate-700 group-focus-within:bg-slate-700"),
+            # Submenus abrem ao lado, por isso só listas simples podem rolar
+            html.Div([_dropdown_entry(c) for c in menu.children],
+                     className=panel_cls + (" max-h-[80vh] overflow-y-auto" if flat else "")),
+        ]))
+    return html.Nav(menus, id="menu-bar", className="bg-slate-800 text-white text-sm px-2 flex relative z-40")
+
+
+def _breadcrumb(trail):
+    return html.P(" › ".join(trail), className="text-xs text-slate-500 mb-1")
+
+
+def _page_header(item: Item, title=None):
+    return html.Div([_breadcrumb(item.trail[:-1]),
+                     html.H1(title or item.label, className="text-2xl font-semibold mb-6")])
+
+
+# ---------------------------------------------------------------------------
+# Páginas
+# ---------------------------------------------------------------------------
+
+def home_page():
+    available = [it for it in ITEMS.values() if it.page]
+    cards = [dcc.Link(_card([_breadcrumb(it.trail[:-1]), html.Div(it.label, className="font-semibold")],
+                            "hover:ring-2 hover:ring-sky-400 h-full"), href=it.path)
+             for it in available]
+    return html.Div([
+        html.H1("Análises disponíveis", className="text-2xl font-semibold mb-2"),
+        html.P(f"{len(available)} de {len(ITEMS)} itens dos menus Calc, Estat e Gráfico do Minitab já têm tela. "
+               "Os demais aparecem nos menus como “em breve”.", className="text-sm text-slate-600 mb-6"),
+        html.Div(cards, className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"),
+    ])
+
+
+def coming_soon_page(item: Item):
+    return html.Div([
+        _page_header(item),
         _card([
-            html.H2("Criar planejamento", className="font-semibold mb-3"),
-            _dropdown("doe-design", "Tipo", value="factorial", options=[
-                {"label": "Fatorial 2 níveis", "value": "factorial"},
-                {"label": "Composto central (CCD)", "value": "ccd"},
-                {"label": "Box-Behnken", "value": "bbd"},
+            html.P("Esta análise ainda não está disponível no app.", className="font-medium mb-2"),
+            html.P(f"{item.jasp} {JASP_STATUS[item.jasp]}", className="text-sm text-slate-600 mb-4"),
+            html.A("Ver a matriz Minitab × JASP", href=MATRIX_URL, target="_blank",
+                   className="text-sm text-sky-700 underline"),
+        ]),
+    ])
+
+
+def describe_page(item, _arg):
+    return html.Div([_page_header(item), _two_columns(
+        _card([_data_panel("desc"), _dropdown("desc-cols", "Variáveis", multi=True)]),
+        _section("Estatísticas descritivas", html.Div(id="desc-table")),
+        _section("Boxplot", _graph("desc-box")),
+    )])
+
+
+def capability_page(item, _arg):
+    return html.Div([_page_header(item, "Análise de capacidade normal"), _two_columns(
+        _card([
+            _data_panel("cap"),
+            _dropdown("cap-col", "Variável"),
+            html.H2("Especificação", className="font-semibold mb-3"),
+            html.Div(className="grid grid-cols-3 gap-2", children=[
+                _number_input("cap-lsl", "LSL", 9.85),
+                _number_input("cap-target", "Alvo", 10.0),
+                _number_input("cap-usl", "USL", 10.15),
             ]),
+        ]),
+        _section("Índices de capacidade", html.Div(id="cap-result")),
+        _section("Histograma e limites de especificação", _graph("cap-hist")),
+    )])
+
+
+def imr_page(item, _arg):
+    return html.Div([_page_header(item, "Carta I-MR"), _two_columns(
+        _card([_data_panel("imr"), _dropdown("imr-col", "Variável")]),
+        _section("Valores individuais", _graph("imr-i"), html.Div(id="imr-summary", className="text-sm")),
+        _section("Amplitude móvel", _graph("imr-mr")),
+    )])
+
+
+def xbar_page(item, _arg):
+    return html.Div([_page_header(item, "Carta Xbarra-R"), _two_columns(
+        _card([
+            _data_panel("xbar"),
+            _dropdown("xbar-cols", "Colunas", multi=True),
+            html.P("Uma coluna: subgrupos consecutivos do tamanho abaixo. Várias colunas: cada linha é um subgrupo.",
+                   className="text-xs text-slate-500 mb-3"),
+            _number_input("xbar-n", "Tamanho do subgrupo", 5),
+        ]),
+        _section("Médias (Xbarra)", _graph("xbar-x"), html.Div(id="xbar-summary", className="text-sm")),
+        _section("Amplitudes (R)", _graph("xbar-r")),
+    )])
+
+
+def attr_page(item, chart_type):
+    return html.Div([_page_header(item, ATTRIBUTE_CHARTS[chart_type][0]), _two_columns(
+        _card([
+            _data_panel("attr"),
+            _dropdown("attr-type", "Carta", value=chart_type,
+                      options=[{"label": v[0], "value": k} for k, v in ATTRIBUTE_CHARTS.items()]),
+            _dropdown("attr-count", "Defeituosos / defeitos"),
+            _dropdown("attr-size", "Tamanho da amostra"),
+        ]),
+        _card([
+            html.H2(id="attr-title", className="font-semibold mb-3"),
+            _graph("attr-graph"),
+            html.Div(id="attr-summary", className="text-sm"),
+        ]),
+    )])
+
+
+def msa_page(item, _arg):
+    return html.Div([_page_header(item, "Gage R&R cruzado (ANOVA)"), _two_columns(
+        _card([
+            _data_panel("msa"),
+            _dropdown("msa-part", "Peça"),
+            _dropdown("msa-operator", "Operador"),
+            _dropdown("msa-measure", "Medição"),
+            _number_input("msa-tol", "Tolerância (LSE − LIE, opcional)", 0.6),
+        ]),
+        _section("Avaliação do sistema de medição", html.Div(id="msa-eval")),
+        _section("Componentes de variação", _graph("msa-graph")),
+        _section("ANOVA", html.Div(id="msa-anova")),
+    )])
+
+
+def doe_create_page(item, kind):
+    return html.Div([_page_header(item, f"Criar planejamento: {DOE_DESIGNS[kind]}"), html.Div(
+        className="max-w-md", children=_card([
+            _dropdown("doe-design", "Tipo", value=kind,
+                      options=[{"label": v, "value": k} for k, v in DOE_DESIGNS.items()]),
             html.Div(className="grid grid-cols-3 gap-2 mb-3", children=[
                 _number_input("doe-k", "Fatores", 3),
                 _number_input("doe-runs", "Corridas", None),
                 _number_input("doe-center", "Centrais", 0),
             ]),
+            html.P("Corridas vale só para o fatorial (fração); vazio gera o fatorial completo.",
+                   className="text-xs text-slate-500 mb-3"),
             html.Button("Gerar e baixar CSV", id="doe-create",
                         className="bg-slate-900 text-white rounded px-3 py-1 text-sm"),
             html.P(id="doe-created", className="text-xs text-slate-500 mt-2"),
             dcc.Download(id="doe-download"),
         ]),
+    )])
+
+
+def doe_analyze_page(item, model):
+    return html.Div([_page_header(item), _two_columns(
         _card([
-            html.H2("Analisar", className="font-semibold mb-3"),
             _data_panel("doe"),
             _dropdown("doe-response", "Resposta"),
             _dropdown("doe-factors", "Fatores", multi=True),
-            _dropdown("doe-model", "Modelo", value="interactions", options=[
+            _dropdown("doe-model", "Modelo", value=model, options=[
                 {"label": "Efeitos principais", "value": "linear"},
                 {"label": "Com interações de 2ª ordem", "value": "interactions"},
                 {"label": "Quadrático (superfície de resposta)", "value": "quadratic"},
@@ -218,31 +387,61 @@ doe_tab = html.Div(className="grid gap-6 md:grid-cols-3", children=[
             dcc.Checklist(id="doe-coded", options=[{"label": " Fatores já codificados (−1/+1)", "value": "coded"}],
                           value=[], className="text-sm"),
         ]),
-    ]),
-    html.Div(className="md:col-span-2 grid gap-6 content-start", children=[
-        _card([html.H2("Pareto dos efeitos padronizados", className="font-semibold mb-3"),
-               dcc.Graph(id="doe-pareto", config={"displaylogo": False})]),
-        _card([html.H2("Coeficientes codificados", className="font-semibold mb-3"), html.Div(id="doe-coef")]),
-    ]),
-])
+        _section("Pareto dos efeitos padronizados", _graph("doe-pareto")),
+        _section("Coeficientes codificados", html.Div(id="doe-coef")),
+    )])
+
+
+PAGES = {
+    "describe": describe_page,
+    "capability": capability_page,
+    "imr": imr_page,
+    "xbar-r": xbar_page,
+    "attr": attr_page,
+    "gage-rr": msa_page,
+    "doe-create": doe_create_page,
+    "doe-analyze": doe_analyze_page,
+}
+
+
+def render(pathname: str | None):
+    """Conteúdo da página para um caminho da URL."""
+    path = (pathname or "/").rstrip("/") or "/"
+    if path == "/":
+        return home_page()
+    item = ITEMS.get(path)
+    if item is None:
+        return _card([html.P("Página não encontrada.", className="mb-2"),
+                      dcc.Link("Voltar ao início", href="/", className="text-sky-700 underline")])
+    if not item.page:
+        return coming_soon_page(item)
+    name, _, arg = item.page.partition(":")
+    return PAGES[name](item, arg)
+
 
 app.layout = html.Div(
     className="min-h-screen bg-slate-100 text-slate-800",
     children=[
+        dcc.Location(id="url"),
         html.Header(
-            html.H1("Análises estatísticas · JASP em Python", className="text-xl font-semibold"),
+            dcc.Link(html.H1("Análises estatísticas · JASP em Python", className="text-xl font-semibold"), href="/"),
             className="bg-slate-900 text-white px-6 py-4",
         ),
-        html.Main(className="max-w-6xl mx-auto p-6", children=dcc.Tabs(
-            value="var", className="mb-6",
-            children=[
-                dcc.Tab(label="Variáveis (capacidade e I-MR)", value="var", children=html.Div(variables_tab, className="pt-6")),
-                dcc.Tab(label="Atributos (p, np, c, u)", value="attr", children=html.Div(attributes_tab, className="pt-6")),
-                dcc.Tab(label="Gage R&R (MSA)", value="msa", children=html.Div(msa_tab, className="pt-6")),
-                dcc.Tab(label="DOE", value="doe", children=html.Div(doe_tab, className="pt-6")),
-            ],
-        )),
+        _menu_bar(),
+        html.Main(id="page", className="max-w-6xl mx-auto p-6"),
     ],
+)
+
+
+@app.callback(Output("page", "children"), Input("url", "pathname"))
+def route(pathname):
+    return render(pathname)
+
+
+# Fecha o menu depois de escolher um item (o foco no link o manteria aberto)
+app.clientside_callback(
+    "function(_) { if (document.activeElement) { document.activeElement.blur(); } return window.dash_clientside.no_update; }",
+    Output("menu-bar", "title"), Input("url", "pathname"),
 )
 
 
@@ -272,6 +471,10 @@ def _df(data) -> pd.DataFrame:
     return pd.read_json(io.StringIO(data), orient="split")
 
 
+def _numeric(data) -> list[str]:
+    return _df(data).select_dtypes("number").columns.tolist()
+
+
 def _pick(columns, *candidates, default=None):
     lower = {c.lower(): c for c in columns}
     for cand in candidates:
@@ -281,55 +484,146 @@ def _pick(columns, *candidates, default=None):
     return default
 
 
-# ---------------------------------------------------------------------------
-# Aba Variáveis
-# ---------------------------------------------------------------------------
+def _single_column(prefix):
+    @app.callback(Output(f"{prefix}-col", "options"), Output(f"{prefix}-col", "value"), Input(f"{prefix}-data", "data"))
+    def columns(data):
+        numeric = _numeric(data)
+        return numeric, _pick(numeric, "diam", "medi", default=numeric[-1] if numeric else None)
 
-@app.callback(Output("column", "options"), Output("column", "value"), Input("var-data", "data"))
-def list_columns(data):
-    numeric = _df(data).select_dtypes("number").columns.tolist()
-    return numeric, numeric[-1] if numeric else None
+
+for _prefix in ("cap", "imr"):
+    _single_column(_prefix)
 
 
 def _fmt(v):
     return "—" if v is None else f"{v:.3f}"
 
 
-@app.callback(
-    Output("capability", "children"), Output("imr", "figure"),
-    Input("var-data", "data"), Input("column", "value"),
-    Input("lsl", "value"), Input("usl", "value"), Input("target", "value"),
-)
-def analyse(data, column, lsl, usl, target):
-    if not column:
-        return html.P("Selecione uma variável numérica."), go.Figure()
-    values = _df(data)[column]
+# ---------------------------------------------------------------------------
+# Estatísticas descritivas
+# ---------------------------------------------------------------------------
 
+@app.callback(Output("desc-cols", "options"), Output("desc-cols", "value"), Input("desc-data", "data"))
+def desc_columns(data):
+    numeric = _numeric(data)
+    return numeric, [c for c in numeric if c.lower() not in ("amostra", "lote", "subgrupo")] or numeric
+
+
+@app.callback(Output("desc-table", "children"), Output("desc-box", "figure"),
+              Input("desc-data", "data"), Input("desc-cols", "value"))
+def desc_analyse(data, cols):
+    if not cols:
+        return html.P("Selecione ao menos uma variável."), go.Figure()
+    df = _df(data)
+    names = {"n": "N", "mean": "Média", "std": "Desvio padrão", "se_mean": "EP da média", "min": "Mínimo",
+             "q1": "Q1", "median": "Mediana", "q3": "Q3", "max": "Máximo", "skewness": "Assimetria",
+             "kurtosis": "Curtose"}
     try:
-        cap = capability_analysis(values, lsl=lsl, usl=usl, target=target)
-        rows = [("Cp", cap["Cp"]), ("Cpk", cap["Cpk"]), ("Pp", cap["Pp"]), ("Ppk", cap["Ppk"]),
-                ("Cpm", cap.get("Cpm")), ("PPM total", cap["ppm_overall"]["ppm_total"]),
-                ("Nível sigma", cap["sigma_level"])]
-        capability = html.Div(className="grid grid-cols-2 md:grid-cols-4 gap-3", children=[
-            html.Div([html.Div(k, className="text-xs text-slate-500"),
-                      html.Div(_fmt(v), className="text-lg font-semibold")],
-                     className="bg-slate-50 rounded p-3")
-            for k, v in rows
-        ])
+        table = pd.DataFrame({c: describe(df[c]) for c in cols}).rename(index=names)
     except ValueError as exc:
-        capability = _error(exc)
-
-    imr = imr_chart(values)["individuals"]
-    fig = go.Figure()
-    fig.add_scatter(y=imr["value"], mode="lines+markers", name=column)
-    for col, dash_style in (("center", "solid"), ("ucl", "dash"), ("lcl", "dash")):
-        fig.add_scatter(y=imr[col], mode="lines", name=col.upper(), line={"dash": dash_style})
-    fig.update_layout(**FIG_LAYOUT)
-    return capability, fig
+        return _error(exc), go.Figure()
+    fig = go.Figure([go.Box(y=df[c], name=c, boxmean=True) for c in cols])
+    fig.update_layout(**FIG_LAYOUT, showlegend=False)
+    return _table(table.T, "Variável"), fig
 
 
 # ---------------------------------------------------------------------------
-# Aba Atributos
+# Capacidade normal
+# ---------------------------------------------------------------------------
+
+@app.callback(
+    Output("cap-result", "children"), Output("cap-hist", "figure"),
+    Input("cap-data", "data"), Input("cap-col", "value"),
+    Input("cap-lsl", "value"), Input("cap-usl", "value"), Input("cap-target", "value"),
+)
+def cap_analyse(data, column, lsl, usl, target):
+    if not column:
+        return html.P("Selecione uma variável numérica."), go.Figure()
+    values = _df(data)[column].dropna()
+    fig = go.Figure(go.Histogram(x=values, name=column, marker_color="#94a3b8"))
+    for value, name, color in ((lsl, "LSL", "#dc2626"), (target, "Alvo", "#16a34a"), (usl, "USL", "#dc2626")):
+        if value is not None:
+            fig.add_vline(x=value, line_dash="dash", line_color=color, annotation_text=name)
+    fig.update_layout(**FIG_LAYOUT, showlegend=False)
+    try:
+        cap = capability_analysis(values, lsl=lsl, usl=usl, target=target)
+    except ValueError as exc:
+        return _error(exc), fig
+    rows = [("Cp", cap["Cp"]), ("Cpk", cap["Cpk"]), ("Pp", cap["Pp"]), ("Ppk", cap["Ppk"]),
+            ("Cpm", cap.get("Cpm")), ("PPM total", cap["ppm_overall"]["ppm_total"]),
+            ("Nível sigma", cap["sigma_level"]), ("N", float(cap["n"]))]
+    return html.Div(className="grid grid-cols-2 md:grid-cols-4 gap-3", children=[
+        html.Div([html.Div(k, className="text-xs text-slate-500"),
+                  html.Div(_fmt(v) if k != "N" else str(int(v)), className="text-lg font-semibold")],
+                 className="bg-slate-50 rounded p-3")
+        for k, v in rows
+    ]), fig
+
+
+# ---------------------------------------------------------------------------
+# Cartas por variáveis
+# ---------------------------------------------------------------------------
+
+@app.callback(
+    Output("imr-i", "figure"), Output("imr-mr", "figure"), Output("imr-summary", "children"),
+    Input("imr-data", "data"), Input("imr-col", "value"),
+)
+def imr_analyse(data, column):
+    if not column:
+        return go.Figure(), go.Figure(), html.P("Selecione uma variável numérica.")
+    try:
+        r = imr_chart(_df(data)[column])
+    except ValueError as exc:
+        return go.Figure(), go.Figure(), _error(exc)
+    v = r["violations"]
+    lines = _violations_summary(r["individuals"]["center"].iloc[0], v, "observações")
+    return (_control_figure(r["individuals"], column, v["rule1"]),
+            _control_figure(r["moving_range"], "MR", _out_of_limits(r["moving_range"]), height=280),
+            html.Ul([html.Li(t) for t in lines]))
+
+
+@app.callback(Output("xbar-cols", "options"), Output("xbar-cols", "value"), Input("xbar-data", "data"))
+def xbar_columns(data):
+    numeric = _numeric(data)
+    subgroups = [c for c in numeric if c.lower().startswith("sub")]
+    if len(subgroups) >= 2:
+        return numeric, subgroups
+    return numeric, [_pick(numeric, "diam", "medi", default=numeric[-1] if numeric else None)]
+
+
+@app.callback(
+    Output("xbar-x", "figure"), Output("xbar-r", "figure"), Output("xbar-summary", "children"),
+    Input("xbar-data", "data"), Input("xbar-cols", "value"), Input("xbar-n", "value"),
+)
+def xbar_analyse(data, cols, size):
+    cols = [c for c in (cols or []) if c]
+    if not cols:
+        return go.Figure(), go.Figure(), html.P("Selecione as colunas.")
+    df = _df(data)
+    try:
+        if len(cols) == 1:
+            values, n = df[cols[0]], int(size or 0)
+        else:
+            rows = df[cols].dropna()  # subgrupo incompleto quebraria o tamanho fixo
+            values, n = rows.to_numpy().ravel(), len(cols)
+        if n < 2:
+            raise ValueError("O subgrupo precisa ter ao menos 2 observações.")
+        r = xbar_r_chart(values, n)
+    except ValueError as exc:
+        return go.Figure(), go.Figure(), _error(exc)
+    v = r["violations"]
+    lines = _violations_summary(r["xbar"]["center"].iloc[0], v)
+    out_r = _out_of_limits(r["range"])
+    if out_r:
+        lines.append(f"Amplitudes fora dos limites (subgrupos): {', '.join(str(i + 1) for i in out_r)}.")
+    lines.append(f"Tamanho do subgrupo: {n}. Sigma estimado (R̄/d2): {r['sigma']:.4g}.")
+    return (_control_figure(r["xbar"], "Média", v["rule1"]),
+            _control_figure(r["range"], "Amplitude", out_r, height=280),
+            html.Ul([html.Li(t) for t in lines]))
+
+
+# ---------------------------------------------------------------------------
+# Cartas por atributos
 # ---------------------------------------------------------------------------
 
 @app.callback(
@@ -338,7 +632,7 @@ def analyse(data, column, lsl, usl, target):
     Input("attr-data", "data"), Input("attr-type", "value"),
 )
 def attr_columns(data, chart_type):
-    cols = _df(data).select_dtypes("number").columns.tolist()
+    cols = _numeric(data)
     defects = chart_type in ("c", "u", "laney_u")
     count = _pick(cols, *(("defeitos", "defects") if defects else ("defeituos", "defective")), default=cols[-1] if cols else None)
     size = _pick(cols, "inspec", "tamanho", "size", default=cols[0] if cols else None)
@@ -360,20 +654,14 @@ def attr_analyse(data, chart_type, count, size):
     except ValueError as exc:
         return title, go.Figure(), _error(exc)
     v = res["violations"]
-    lines = [f"Linha central: {res['center']:.4g}."]
-    lines.append(f"Pontos fora dos limites (subgrupos): {', '.join(str(i + 1) for i in v['rule1'])}."
-                 if v["rule1"] else "Nenhum ponto fora dos limites.")
-    if v["rule2"]:
-        lines.append(f"Regra 2 (9 do mesmo lado) nos subgrupos {', '.join(str(i + 1) for i in v['rule2'])}.")
-    if v["rule3"]:
-        lines.append(f"Regra 3 (6 em tendência) nos subgrupos {', '.join(str(i + 1) for i in v['rule3'])}.")
+    lines = _violations_summary(res["center"], v)
     if "sigma_z" in res:
         lines.append(f"σz de Laney = {res['sigma_z']:.3f} (> 1 indica sobredispersão).")
     return title, _control_figure(res["chart"], count, v["rule1"]), html.Ul([html.Li(t) for t in lines])
 
 
 # ---------------------------------------------------------------------------
-# Aba Gage R&R
+# Gage R&R
 # ---------------------------------------------------------------------------
 
 @app.callback(
@@ -433,7 +721,7 @@ def msa_analyse(data, part, operator, measure, tol):
 
 
 # ---------------------------------------------------------------------------
-# Aba DOE
+# DOE
 # ---------------------------------------------------------------------------
 
 @app.callback(
@@ -467,7 +755,7 @@ def doe_create(_, kind, k, runs, center):
     Input("doe-data", "data"),
 )
 def doe_columns(data):
-    numeric = _df(data).select_dtypes("number").columns.tolist()
+    numeric = _numeric(data)
     design_cols = {"StdOrder", "RunOrder", "CenterPt", "PtType", "Blocks"}
     candidates = [c for c in numeric if c not in design_cols]
     response = candidates[-1] if candidates else None
