@@ -32,3 +32,15 @@ def test_paths_are_slugs():
 @pytest.mark.parametrize("path", ["/", "/nao-existe", *ITEMS])
 def test_every_route_renders(path):
     assert app.render(path) is not None
+
+
+def test_attribute_labels_follow_chart_type():
+    import pandas as pd
+
+    data = pd.read_csv(app.DATA_DIR / "teste_cartas_controle.csv").to_json(orient="split")
+    _, count, _, size, label, size_style, _ = app.attr_columns(data, "p")
+    assert (count, size, size_style) == ("Defeituosos", "Inspecionados", None)
+    assert "defeituosas" in label
+    _, count, _, _, label, size_style, help_ = app.attr_columns(data, "c")
+    assert count == "Defeitos" and "defeitos" in label
+    assert size_style == {"display": "none"} and "não usa tamanho" in help_

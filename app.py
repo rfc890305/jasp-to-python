@@ -17,7 +17,7 @@ import dash
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Input, Output, State, dcc, html
+from dash import Input, Output, State, ctx, dcc, html
 
 from backend.descriptives import describe
 from backend.quality import (
@@ -99,13 +99,13 @@ def _number_input(id_, label, value=None):
 
 def _dropdown(id_, label, multi=False, options=None, value=None):
     return html.Div([
-        html.Label(label, className="block text-sm text-slate-600 mb-1"),
+        html.Label(label, id=f"{id_}-label", htmlFor=id_, className="block text-sm text-slate-600 mb-1"),
         dcc.Dropdown(id=id_, multi=multi, options=options or [], value=value, clearable=False),
     ], className="mb-3")
 
 
 def _data_panel(prefix):
-    """Upload de CSV + nome do conjunto; cada página começa com o seu exemplo."""
+    """Upload de CSV + nome do conjunto; sem arquivo enviado, a página usa o seu exemplo."""
     return html.Div([
         html.H2("Dados", className="font-semibold mb-3"),
         dcc.Upload(
@@ -113,7 +113,12 @@ def _data_panel(prefix):
             children=html.Div("Arraste um CSV ou clique para enviar"),
             className="border-2 border-dashed rounded p-4 text-center text-sm cursor-pointer mb-2",
         ),
-        html.P(id=f"{prefix}-name", className="text-xs text-slate-500 mb-4"),
+        html.Div(className="flex items-center justify-between gap-2 mb-4", children=[
+            html.P(id=f"{prefix}-name", className="text-xs text-slate-500"),
+            html.Button("Usar exemplo", id=f"{prefix}-example", className="text-xs text-sky-700 underline"),
+        ]),
+        html.P("O arquivo enviado vale para todas as análises até você enviar outro.",
+               className="text-xs text-slate-400 -mt-3 mb-4"),
         dcc.Store(id=f"{prefix}-data"),
     ])
 
@@ -276,7 +281,7 @@ def coming_soon_page(item: Item):
 
 def describe_page(item, _arg):
     return html.Div([_page_header(item), _two_columns(
-        _card([_data_panel("desc"), _dropdown("desc-cols", "Variáveis", multi=True)]),
+        _card([_data_panel("desc"), _dropdown("desc-cols", "Colunas a resumir", multi=True)]),
         _section("Estatísticas descritivas", html.Div(id="desc-table")),
         _section("Boxplot", _graph("desc-box")),
     )])
@@ -286,7 +291,7 @@ def capability_page(item, _arg):
     return html.Div([_page_header(item, "Análise de capacidade normal"), _two_columns(
         _card([
             _data_panel("cap"),
-            _dropdown("cap-col", "Variável"),
+            _dropdown("cap-col", "Coluna com as medições"),
             html.H2("Especificação", className="font-semibold mb-3"),
             html.Div(className="grid grid-cols-3 gap-2", children=[
                 _number_input("cap-lsl", "LSL", 9.85),
@@ -301,7 +306,7 @@ def capability_page(item, _arg):
 
 def imr_page(item, _arg):
     return html.Div([_page_header(item, "Carta I-AM (valores individuais e amplitude móvel)"), _two_columns(
-        _card([_data_panel("imr"), _dropdown("imr-col", "Variável")]),
+        _card([_data_panel("imr"), _dropdown("imr-col", "Coluna com as medições (uma por linha)")]),
         _section("Valores individuais", _graph("imr-i"), html.Div(id="imr-summary", className="text-sm")),
         _section("Amplitude móvel", _graph("imr-mr")),
     )])
@@ -311,7 +316,7 @@ def xbar_page(item, _arg):
     return html.Div([_page_header(item, "Carta Xbarra-R"), _two_columns(
         _card([
             _data_panel("xbar"),
-            _dropdown("xbar-cols", "Colunas", multi=True),
+            _dropdown("xbar-cols", "Colunas com as medições", multi=True),
             html.P("Uma coluna: subgrupos consecutivos do tamanho abaixo. Várias colunas: cada linha é um subgrupo.",
                    className="text-xs text-slate-500 mb-3"),
             _number_input("xbar-n", "Tamanho do subgrupo", 5),
@@ -327,8 +332,9 @@ def attr_page(item, chart_type):
             _data_panel("attr"),
             _dropdown("attr-type", "Carta", value=chart_type,
                       options=[{"label": v[0], "value": k} for k, v in ATTRIBUTE_CHARTS.items()]),
-            _dropdown("attr-count", "Defeituosos / defeitos"),
-            _dropdown("attr-size", "Tamanho da amostra"),
+            _dropdown("attr-count", "Coluna de contagem"),
+            html.Div(id="attr-size-box", children=_dropdown("attr-size", "Coluna com o tamanho da amostra")),
+            html.P(id="attr-help", className="text-xs text-slate-500 mb-3"),
         ]),
         _card([
             html.H2(id="attr-title", className="font-semibold mb-3"),
@@ -342,9 +348,9 @@ def msa_page(item, _arg):
     return html.Div([_page_header(item, "Gage R&R cruzado (ANOVA)"), _two_columns(
         _card([
             _data_panel("msa"),
-            _dropdown("msa-part", "Peça"),
-            _dropdown("msa-operator", "Operador"),
-            _dropdown("msa-measure", "Medição"),
+            _dropdown("msa-part", "Coluna de peças"),
+            _dropdown("msa-operator", "Coluna de operadores"),
+            _dropdown("msa-measure", "Coluna com as medições"),
             _number_input("msa-tol", "Tolerância (LSE − LIE, opcional)", 0.6),
         ]),
         _section("Avaliação do sistema de medição", html.Div(id="msa-eval")),
@@ -377,8 +383,8 @@ def doe_analyze_page(item, model):
     return html.Div([_page_header(item), _two_columns(
         _card([
             _data_panel("doe"),
-            _dropdown("doe-response", "Resposta"),
-            _dropdown("doe-factors", "Fatores", multi=True),
+            _dropdown("doe-response", "Coluna da resposta"),
+            _dropdown("doe-factors", "Colunas dos fatores", multi=True),
             _dropdown("doe-model", "Modelo", value=model, options=[
                 {"label": "Efeitos principais", "value": "linear"},
                 {"label": "Com interações de 2ª ordem", "value": "interactions"},
@@ -423,6 +429,7 @@ app.layout = html.Div(
     className="min-h-screen bg-slate-100 text-slate-800",
     children=[
         dcc.Location(id="url"),
+        dcc.Store(id="dataset", storage_type="session"),
         html.Header(
             dcc.Link(html.H1("Análises estatísticas · JASP em Python", className="text-xl font-semibold"), href="/"),
             className="bg-slate-900 text-white px-6 py-4",
@@ -450,17 +457,26 @@ app.clientside_callback(
 # ---------------------------------------------------------------------------
 
 def _register_loader(prefix):
+    # O CSV enviado fica em "dataset" (sessão do navegador) e vale para todas as páginas,
+    # como a planilha ativa do Minitab; sem envio, cada página usa o seu exemplo.
     @app.callback(
         Output(f"{prefix}-data", "data"), Output(f"{prefix}-name", "children"),
-        Input(f"{prefix}-upload", "contents"), State(f"{prefix}-upload", "filename"),
+        Output("dataset", "data", allow_duplicate=True),
+        Input(f"{prefix}-upload", "contents"), Input(f"{prefix}-example", "n_clicks"),
+        State(f"{prefix}-upload", "filename"), State("dataset", "data"),
+        prevent_initial_call="initial_duplicate",
     )
-    def load(contents, filename):
-        if contents is None:
-            example = EXAMPLES[prefix]
-            return pd.read_csv(example).to_json(orient="split"), f"Exemplo: {example.name}"
-        _, b64 = contents.split(",", 1)
-        df = pd.read_csv(io.StringIO(base64.b64decode(b64).decode("utf-8-sig")), sep=None, engine="python")
-        return df.to_json(orient="split"), filename
+    def load(contents, _example, filename, dataset):
+        if ctx.triggered_id == f"{prefix}-example":
+            dataset = None
+        elif contents is not None:
+            _, b64 = contents.split(",", 1)
+            df = pd.read_csv(io.StringIO(base64.b64decode(b64).decode("utf-8-sig")), sep=None, engine="python")
+            dataset = {"name": filename, "data": df.to_json(orient="split")}
+        if dataset:
+            return dataset["data"], f"Arquivo: {dataset['name']}", dataset
+        example = EXAMPLES[prefix]
+        return pd.read_csv(example).to_json(orient="split"), f"Exemplo: {example.name}", None
 
 
 for _prefix in EXAMPLES:
@@ -629,6 +645,7 @@ def xbar_analyse(data, cols, size):
 @app.callback(
     Output("attr-count", "options"), Output("attr-count", "value"),
     Output("attr-size", "options"), Output("attr-size", "value"),
+    Output("attr-count-label", "children"), Output("attr-size-box", "style"), Output("attr-help", "children"),
     Input("attr-data", "data"), Input("attr-type", "value"),
 )
 def attr_columns(data, chart_type):
@@ -636,7 +653,18 @@ def attr_columns(data, chart_type):
     defects = chart_type in ("c", "u", "laney_u")
     count = _pick(cols, *(("defeitos", "defects") if defects else ("defeituos", "defective")), default=cols[-1] if cols else None)
     size = _pick(cols, "inspec", "tamanho", "size", default=cols[0] if cols else None)
-    return cols, count, cols, size
+    needs_size = ATTRIBUTE_CHARTS[chart_type][2]
+    if defects:
+        label = "Coluna com o nº de defeitos por subgrupo"
+        help_ = "Defeitos: falhas contadas (uma peça pode ter várias)."
+    else:
+        label = "Coluna com o nº de peças defeituosas por subgrupo"
+        help_ = "Defeituosos: peças reprovadas (no máximo o tamanho da amostra)."
+    if needs_size:
+        help_ += " Tamanho da amostra: quantas peças foram inspecionadas em cada subgrupo."
+    else:
+        help_ += " A carta c supõe a mesma área de inspeção em todos os subgrupos e não usa tamanho de amostra."
+    return cols, count, cols, size, label, None if needs_size else {"display": "none"}, help_
 
 
 @app.callback(
