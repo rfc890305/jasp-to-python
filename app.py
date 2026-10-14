@@ -36,6 +36,8 @@ from backend.quality import (
     u_chart,
     xbar_r_chart,
 )
+from backend.quality.control_tests import ATTRIBUTE_TESTS, TESTS, special_cause_tests
+from backend.quality.control_tests import describe as describe_test
 from backend.quality.msa import gauge_rr_verdict
 from menu import ITEMS, MENU, Item, Node
 
@@ -157,35 +159,85 @@ def _error(exc):
     return html.P(str(exc), className="text-red-600")
 
 
-def _control_figure(chart: pd.DataFrame, name: str, violations: list[int], height=None) -> go.Figure:
+def _control_figure(chart: pd.DataFrame, name: str, flags: dict[int, list[tuple[int, int]]], height=None) -> go.Figure:
+    """Carta com LC/LSC/LIC; pontos que falharam em testes ficam em vermelho com o número do teste."""
     fig = go.Figure()
     x = np.arange(1, len(chart) + 1)
-    fig.add_scatter(x=x, y=chart["value"], mode="lines+markers", name=name)
+    y = chart["value"].to_numpy()
+    fig.add_scatter(x=x, y=y, mode="lines+markers", name=name)
     fig.add_scatter(x=x, y=chart["center"], mode="lines", name="LC")
     for col in ("ucl", "lcl"):
         fig.add_scatter(x=x, y=chart[col], mode="lines", name=col.upper().replace("UCL", "LSC").replace("LCL", "LIC"),
                         line={"dash": "dash", "shape": "hvh"})
-    if violations:
-        fig.add_scatter(x=x[violations], y=chart["value"].iloc[violations], mode="markers", name="Fora de controle",
+    # Sequências (testes 2 a 8) destacadas por baixo dos pontos, como uma faixa laranja
+    first = True
+    for test, hits in sorted(flags.items()):
+        for start, end in hits:
+            if end > start:
+                fig.add_scatter(x=x[start:end + 1], y=y[start:end + 1], mode="lines", name="Sequência do teste",
+                                legendgroup="seq", showlegend=first, hoverinfo="skip",
+                                line={"color": "rgba(249, 115, 22, 0.35)", "width": 10})
+                first = False
+    marked: dict[int, list[int]] = {}
+    for test, hits in flags.items():
+        for _, end in hits:
+            marked.setdefault(end, []).append(test)
+    if marked:
+        idx = sorted(marked)
+        fig.add_scatter(x=x[idx], y=y[idx], mode="markers+text", name="Falhou em teste",
+                        text=[",".join(str(t) for t in sorted(set(marked[i]))) for i in idx],
+                        textposition="top center", textfont={"color": "red"},
                         marker={"color": "red", "size": 11})
     fig.update_layout(**{**FIG_LAYOUT, **({"height": height} if height else {})})
     return fig
 
 
-def _out_of_limits(chart: pd.DataFrame) -> list[int]:
-    """Pontos além de LSC/LIC (teste 1), para as cartas de amplitude."""
+def _out_of_limits(chart: pd.DataFrame) -> dict[int, list[tuple[int, int]]]:
+    """Teste 1 pelos próprios limites, para as cartas de amplitude (o Minitab só aplica o teste 1 nelas)."""
     value = chart["value"]
-    return [int(i) for i in np.where((value > chart["ucl"]) | (value < chart["lcl"]))[0]]
+    return {1: [(int(i), int(i)) for i in np.where((value > chart["ucl"]) | (value < chart["lcl"]))[0]]}
 
 
-def _violations_summary(center, v, unit="subgrupos"):
+def _tests_panel(prefix, available, default=(1, 2, 3)):
+    """Testes para causas especiais com K ajustável, como em "Opções da carta > Testes" no Minitab."""
+    rows = [html.Div(className="flex items-start gap-2 py-1", children=[
+        dcc.Checklist(id=f"{prefix}-t{t}", options=[{"label": "", "value": t}],
+                      value=[t] if t in default else [], className="pt-0.5"),
+        dcc.Input(id=f"{prefix}-k{t}", type="number", value=TESTS[t][1], min=1, debounce=True,
+                  className="w-16 shrink-0 border rounded px-1 text-sm"),
+        html.Span([html.B(f"{t}. "), TESTS[t][0].format(k="K", k1="K−1")], className="text-xs text-slate-600"),
+    ]) for t in available]
+    return html.Details([
+        html.Summary("Testes para causas especiais", className="text-sm text-slate-700 cursor-pointer mb-2"),
+        html.P("Marque os testes e ajuste o K de cada um.", className="text-xs text-slate-500 mb-1"),
+        *rows,
+    ], className="mb-3")
+
+
+def _test_inputs(prefix, available):
+    return ([Input(f"{prefix}-t{t}", "value") for t in available]
+            + [Input(f"{prefix}-k{t}", "value") for t in available])
+
+
+def _run_tests(chart: pd.DataFrame, available, args):
+    """Aplica os testes marcados à carta; σ de cada ponto sai da distância LC–LSC (3σ)."""
+    n = len(available)
+    selected = [t for t, checked in zip(available, args[:n]) if checked]
+    k = {t: int(v) for t, v in zip(available, args[n:]) if v}
+    sigma = (chart["ucl"] - chart["center"]) / 3
+    return special_cause_tests(chart["value"], chart["center"], sigma, selected, k), selected, k
+
+
+def _tests_summary(center, flags, selected, k, unit="subgrupos"):
     lines = [f"Linha central: {center:.4g}."]
-    lines.append(f"Pontos fora dos limites ({unit}): {', '.join(str(i + 1) for i in v['rule1'])}."
-                 if v["rule1"] else "Nenhum ponto fora dos limites.")
-    if v["rule2"]:
-        lines.append(f"Regra 2 (9 do mesmo lado), {unit}: {', '.join(str(i + 1) for i in v['rule2'])}.")
-    if v["rule3"]:
-        lines.append(f"Regra 3 (6 em tendência), {unit}: {', '.join(str(i + 1) for i in v['rule3'])}.")
+    if not selected:
+        return lines + ["Nenhum teste selecionado."]
+    failed = [t for t in selected if flags.get(t)]
+    if not failed:
+        return lines + ["Nenhum ponto falhou nos testes selecionados."]
+    for t in failed:
+        points = ", ".join(str(e + 1) for _, e in flags[t])
+        lines.append(f"Teste {t}, {describe_test(t, k.get(t))}: {unit} {points}.")
     return lines
 
 
@@ -309,7 +361,8 @@ def capability_page(item, _arg):
 
 def imr_page(item, _arg):
     return html.Div([_page_header(item, "Carta I-AM (valores individuais e amplitude móvel)"), _two_columns(
-        _card([_data_panel("imr"), _dropdown("imr-col", "Coluna com as medições (uma por linha)")]),
+        _card([_data_panel("imr"), _dropdown("imr-col", "Coluna com as medições (uma por linha)"),
+               _tests_panel("imr", tuple(TESTS))]),
         _section("Valores individuais", _graph("imr-i"), html.Div(id="imr-summary", className="text-sm")),
         _section("Amplitude móvel", _graph("imr-mr")),
     )])
@@ -323,6 +376,7 @@ def xbar_page(item, _arg):
             html.P("Uma coluna: subgrupos consecutivos do tamanho abaixo. Várias colunas: cada linha é um subgrupo.",
                    className="text-xs text-slate-500 mb-3"),
             _number_input("xbar-n", "Tamanho do subgrupo", 5),
+            html.Div(className="mt-3", children=_tests_panel("xbar", tuple(TESTS))),
         ]),
         _section("Médias (Xbarra)", _graph("xbar-x"), html.Div(id="xbar-summary", className="text-sm")),
         _section("Amplitudes (R)", _graph("xbar-r")),
@@ -339,6 +393,7 @@ def attr_page(item, chart_type):
                 _dropdown("attr-size", "Tamanhos dos subgrupos (coluna ou constante)"),
                 html.Div(id="attr-n-box", children=_number_input("attr-n", "Tamanho constante", 1)),
             ]),
+            html.Div(className="mt-3", children=_tests_panel("attr", ATTRIBUTE_TESTS)),
         ]),
         _card([
             html.H2(id="attr-title", className="font-semibold mb-3"),
@@ -612,18 +667,21 @@ def cap_analyse(data, column, lsl, usl, target):
 
 @app.callback(
     Output("imr-i", "figure"), Output("imr-mr", "figure"), Output("imr-summary", "children"),
-    Input("imr-data", "data"), Input("imr-col", "value"),
+    Input("imr-data", "data"), Input("imr-col", "value"), *_test_inputs("imr", tuple(TESTS)),
 )
-def imr_analyse(data, column):
+def imr_analyse(data, column, *tests):
     if not column:
         return go.Figure(), go.Figure(), html.P("Selecione uma variável numérica.")
     try:
         r = imr_chart(_df(data)[column])
     except ValueError as exc:
         return go.Figure(), go.Figure(), _error(exc)
-    v = r["violations"]
-    lines = _violations_summary(r["individuals"]["center"].iloc[0], v, "observações")
-    return (_control_figure(r["individuals"], column, v["rule1"]),
+    try:
+        flags, selected, k = _run_tests(r["individuals"], tuple(TESTS), tests)
+    except ValueError as exc:
+        return go.Figure(), go.Figure(), _error(exc)
+    lines = _tests_summary(r["individuals"]["center"].iloc[0], flags, selected, k, "observações")
+    return (_control_figure(r["individuals"], column, flags),
             _control_figure(r["moving_range"], "MR", _out_of_limits(r["moving_range"]), height=280),
             html.Ul([html.Li(t) for t in lines]))
 
@@ -640,8 +698,9 @@ def xbar_columns(data):
 @app.callback(
     Output("xbar-x", "figure"), Output("xbar-r", "figure"), Output("xbar-summary", "children"),
     Input("xbar-data", "data"), Input("xbar-cols", "value"), Input("xbar-n", "value"),
+    *_test_inputs("xbar", tuple(TESTS)),
 )
-def xbar_analyse(data, cols, size):
+def xbar_analyse(data, cols, size, *tests):
     cols = [c for c in (cols or []) if c]
     if not cols:
         return go.Figure(), go.Figure(), html.P("Selecione as colunas.")
@@ -655,15 +714,15 @@ def xbar_analyse(data, cols, size):
         if n < 2:
             raise ValueError("O subgrupo precisa ter ao menos 2 observações.")
         r = xbar_r_chart(values, n)
+        flags, selected, k = _run_tests(r["xbar"], tuple(TESTS), tests)
     except ValueError as exc:
         return go.Figure(), go.Figure(), _error(exc)
-    v = r["violations"]
-    lines = _violations_summary(r["xbar"]["center"].iloc[0], v)
+    lines = _tests_summary(r["xbar"]["center"].iloc[0], flags, selected, k)
     out_r = _out_of_limits(r["range"])
-    if out_r:
-        lines.append(f"Amplitudes fora dos limites (subgrupos): {', '.join(str(i + 1) for i in out_r)}.")
+    if out_r[1]:
+        lines.append(f"Amplitudes fora dos limites (subgrupos): {', '.join(str(e + 1) for _, e in out_r[1])}.")
     lines.append(f"Tamanho do subgrupo: {n}. Sigma estimado (R̄/d2): {r['sigma']:.4g}.")
-    return (_control_figure(r["xbar"], "Média", v["rule1"]),
+    return (_control_figure(r["xbar"], "Média", flags),
             _control_figure(r["range"], "Amplitude", out_r, height=280),
             html.Ul([html.Li(t) for t in lines]))
 
@@ -697,8 +756,9 @@ def attr_constant_size(size):
     Output("attr-title", "children"), Output("attr-graph", "figure"), Output("attr-summary", "children"),
     Input("attr-data", "data"), Input("attr-type", "data"),
     Input("attr-count", "value"), Input("attr-size", "value"), Input("attr-n", "value"),
+    *_test_inputs("attr", ATTRIBUTE_TESTS),
 )
-def attr_analyse(data, chart_type, count, size, constant):
+def attr_analyse(data, chart_type, count, size, constant, *tests):
     title, func, needs_size = ATTRIBUTE_CHARTS[chart_type]
     if not count or (needs_size and not size):
         return title, go.Figure(), html.P("Selecione as colunas.")
@@ -711,13 +771,13 @@ def attr_analyse(data, chart_type, count, size, constant):
         else:
             sizes = df[size] if needs_size else None
         res = func(df[count], sizes) if needs_size else func(df[count])
+        flags, selected, k = _run_tests(res["chart"], ATTRIBUTE_TESTS, tests)
     except ValueError as exc:
         return title, go.Figure(), _error(exc)
-    v = res["violations"]
-    lines = _violations_summary(res["center"], v)
+    lines = _tests_summary(res["center"], flags, selected, k)
     if "sigma_z" in res:
         lines.append(f"σz de Laney = {res['sigma_z']:.3f} (> 1 indica sobredispersão).")
-    return title, _control_figure(res["chart"], count, v["rule1"]), html.Ul([html.Li(t) for t in lines])
+    return title, _control_figure(res["chart"], count, flags), html.Ul([html.Li(t) for t in lines])
 
 
 # ---------------------------------------------------------------------------
