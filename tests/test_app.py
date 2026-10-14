@@ -53,3 +53,21 @@ def test_constant_sample_size_and_column_numbers():
     assert size == app.CONSTANT and size_opts[-1]["value"] == app.CONSTANT
     _, fig, summary = app.attr_analyse(data, "u", "N_Acidentes", app.CONSTANT, 1)
     assert len(fig.data) >= 4 and "Linha central" in str(summary)
+
+
+def test_imr_runs_selected_tests_with_custom_k():
+    import pandas as pd
+
+    data = pd.read_csv(app.DATA_DIR / "teste_cartas_controle.csv").to_json(orient="split")
+    checks = [[t] if t in (1, 2, 3) else [] for t in app.TESTS]
+    ks = [default for _, default in app.TESTS.values()]
+    fig, _, summary = app.imr_analyse(data, "Diametro_mm", *checks, *ks)
+    text = str(summary)
+    assert "Teste 1" in text and "Teste 2" in text and "Teste 3" in text
+    marked = [tr for tr in fig.data if tr.name == "Falhou em teste"][0]
+    assert list(marked.x) == [8, 21, 29] and list(marked.text) == ["1", "2", "3"]
+    assert any(tr.name == "Sequência do teste" for tr in fig.data)
+    # K maior que a sequência plantada desliga o teste 2
+    ks[1] = 10
+    _, _, summary = app.imr_analyse(data, "Diametro_mm", *checks, *ks)
+    assert "Teste 2" not in str(summary)
