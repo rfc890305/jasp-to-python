@@ -59,6 +59,7 @@ ATTRIBUTE_CHARTS = {
     "laney_p": ("Carta p' de Laney", laney_p_chart, True),
     "laney_u": ("Carta u' de Laney", laney_u_chart, True),
 }
+CONSTANT = "__constante__"  # opção de tamanho de amostra fixo nas cartas por atributos
 DOE_DESIGNS = {"factorial": "Fatorial 2 níveis", "ccd": "Composto central (CCD)", "bbd": "Box-Behnken"}
 JASP_STATUS = {
     "✅": "Existe no JASP: será migrado do módulo R correspondente.",
@@ -119,6 +120,7 @@ def _data_panel(prefix):
         ]),
         html.P("O arquivo enviado vale para todas as análises até você enviar outro.",
                className="text-xs text-slate-400 -mt-3 mb-4"),
+        html.Div(id=f"{prefix}-columns", className="mb-4"),
         dcc.Store(id=f"{prefix}-data"),
     ])
 
@@ -333,7 +335,10 @@ def attr_page(item, chart_type):
             _dropdown("attr-type", "Carta", value=chart_type,
                       options=[{"label": v[0], "value": k} for k, v in ATTRIBUTE_CHARTS.items()]),
             _dropdown("attr-count", "Coluna de contagem"),
-            html.Div(id="attr-size-box", children=_dropdown("attr-size", "Coluna com o tamanho da amostra")),
+            html.Div(id="attr-size-box", children=[
+                _dropdown("attr-size", "Tamanho da amostra (coluna ou constante)"),
+                html.Div(id="attr-n-box", children=_number_input("attr-n", "Tamanho constante de cada subgrupo", 1)),
+            ]),
             html.P(id="attr-help", className="text-xs text-slate-500 mb-3"),
         ]),
         _card([
@@ -460,7 +465,7 @@ def _register_loader(prefix):
     # O CSV enviado fica em "dataset" (sessão do navegador) e vale para todas as páginas,
     # como a planilha ativa do Minitab; sem envio, cada página usa o seu exemplo.
     @app.callback(
-        Output(f"{prefix}-data", "data"), Output(f"{prefix}-name", "children"),
+        Output(f"{prefix}-data", "data"), Output(f"{prefix}-name", "children"), Output(f"{prefix}-columns", "children"),
         Output("dataset", "data", allow_duplicate=True),
         Input(f"{prefix}-upload", "contents"), Input(f"{prefix}-example", "n_clicks"),
         State(f"{prefix}-upload", "filename"), State("dataset", "data"),
@@ -474,9 +479,26 @@ def _register_loader(prefix):
             df = pd.read_csv(io.StringIO(base64.b64decode(b64).decode("utf-8-sig")), sep=None, engine="python")
             dataset = {"name": filename, "data": df.to_json(orient="split")}
         if dataset:
-            return dataset["data"], f"Arquivo: {dataset['name']}", dataset
-        example = EXAMPLES[prefix]
-        return pd.read_csv(example).to_json(orient="split"), f"Exemplo: {example.name}", None
+            return dataset["data"], f"Arquivo: {dataset['name']}", _worksheet(_df(dataset["data"])), dataset
+        example = pd.read_csv(EXAMPLES[prefix])
+        return (example.to_json(orient="split"), f"Exemplo: {EXAMPLES[prefix].name}", _worksheet(example), None)
+
+
+def _worksheet(df: pd.DataFrame):
+    """Colunas carregadas (C1, C2, ...) como na janela de diálogo do Minitab, mais as primeiras linhas."""
+    rows = [html.Tr([html.Td(f"C{i}", className="pr-2 text-slate-400"), html.Td(col, className="pr-2 font-medium"),
+                     html.Td("numérica" if pd.api.types.is_numeric_dtype(df[col]) else "texto",
+                             className="text-slate-400")])
+            for i, col in enumerate(df.columns, start=1)]
+    preview = df.head(10).copy()
+    preview.columns = [f"C{i} {c}" for i, c in enumerate(df.columns, start=1)]
+    return html.Div([
+        html.Div("Colunas carregadas", className="text-sm text-slate-600 mb-1"),
+        html.Div(html.Table(html.Tbody(rows), className="text-sm"),
+                 className="border rounded p-2 max-h-48 overflow-y-auto bg-slate-50"),
+        html.Details([html.Summary(f"Ver primeiras linhas ({len(df)} no total)", className="text-xs text-sky-700 cursor-pointer mt-1"),
+                      html.Div(_table(preview.set_index(preview.columns[0]), preview.columns[0]), className="mt-2 text-xs")]),
+    ])
 
 
 for _prefix in EXAMPLES:
@@ -489,6 +511,12 @@ def _df(data) -> pd.DataFrame:
 
 def _numeric(data) -> list[str]:
     return _df(data).select_dtypes("number").columns.tolist()
+
+
+def _options(data, cols) -> list[dict]:
+    """Opções de coluna com o número da coluna, como no Minitab: "C2 Defeituosos"."""
+    position = {c: i for i, c in enumerate(_df(data).columns, start=1)}
+    return [{"label": f"C{position[c]} {c}", "value": c} for c in cols]
 
 
 def _pick(columns, *candidates, default=None):
@@ -504,7 +532,7 @@ def _single_column(prefix):
     @app.callback(Output(f"{prefix}-col", "options"), Output(f"{prefix}-col", "value"), Input(f"{prefix}-data", "data"))
     def columns(data):
         numeric = _numeric(data)
-        return numeric, _pick(numeric, "diam", "medi", default=numeric[-1] if numeric else None)
+        return _options(data, numeric), _pick(numeric, "diam", "medi", default=numeric[-1] if numeric else None)
 
 
 for _prefix in ("cap", "imr"):
@@ -522,7 +550,7 @@ def _fmt(v):
 @app.callback(Output("desc-cols", "options"), Output("desc-cols", "value"), Input("desc-data", "data"))
 def desc_columns(data):
     numeric = _numeric(data)
-    return numeric, [c for c in numeric if c.lower() not in ("amostra", "lote", "subgrupo")] or numeric
+    return _options(data, numeric), [c for c in numeric if c.lower() not in ("amostra", "lote", "subgrupo")] or numeric
 
 
 @app.callback(Output("desc-table", "children"), Output("desc-box", "figure"),
@@ -603,8 +631,8 @@ def xbar_columns(data):
     numeric = _numeric(data)
     subgroups = [c for c in numeric if c.lower().startswith("sub")]
     if len(subgroups) >= 2:
-        return numeric, subgroups
-    return numeric, [_pick(numeric, "diam", "medi", default=numeric[-1] if numeric else None)]
+        return _options(data, numeric), subgroups
+    return _options(data, numeric), [_pick(numeric, "diam", "medi", default=numeric[-1] if numeric else None)]
 
 
 @app.callback(
@@ -652,7 +680,7 @@ def attr_columns(data, chart_type):
     cols = _numeric(data)
     defects = chart_type in ("c", "u", "laney_u")
     count = _pick(cols, *(("defeitos", "defects") if defects else ("defeituos", "defective")), default=cols[-1] if cols else None)
-    size = _pick(cols, "inspec", "tamanho", "size", default=cols[0] if cols else None)
+    size = _pick(cols, "inspec", "tamanho", "size", default=CONSTANT)
     needs_size = ATTRIBUTE_CHARTS[chart_type][2]
     if defects:
         label = "Coluna com o nº de defeitos por subgrupo"
@@ -664,21 +692,33 @@ def attr_columns(data, chart_type):
         help_ += " Tamanho da amostra: quantas peças foram inspecionadas em cada subgrupo."
     else:
         help_ += " A carta c supõe a mesma área de inspeção em todos os subgrupos e não usa tamanho de amostra."
-    return cols, count, cols, size, label, None if needs_size else {"display": "none"}, help_
+    sizes = _options(data, cols) + [{"label": "Mesmo tamanho em todos os subgrupos (constante)", "value": CONSTANT}]
+    return _options(data, cols), count, sizes, size, label, None if needs_size else {"display": "none"}, help_
+
+
+@app.callback(Output("attr-n-box", "style"), Input("attr-size", "value"))
+def attr_constant_size(size):
+    return None if size == CONSTANT else {"display": "none"}
 
 
 @app.callback(
     Output("attr-title", "children"), Output("attr-graph", "figure"), Output("attr-summary", "children"),
     Input("attr-data", "data"), Input("attr-type", "value"),
-    Input("attr-count", "value"), Input("attr-size", "value"),
+    Input("attr-count", "value"), Input("attr-size", "value"), Input("attr-n", "value"),
 )
-def attr_analyse(data, chart_type, count, size):
+def attr_analyse(data, chart_type, count, size, constant):
     title, func, needs_size = ATTRIBUTE_CHARTS[chart_type]
     if not count or (needs_size and not size):
         return title, go.Figure(), html.P("Selecione as colunas.")
     df = _df(data)
     try:
-        res = func(df[count], df[size]) if needs_size else func(df[count])
+        if needs_size and size == CONSTANT:
+            if not constant or constant <= 0:
+                raise ValueError("Informe um tamanho de subgrupo maior que zero.")
+            sizes = pd.Series(float(constant), index=df.index)
+        else:
+            sizes = df[size] if needs_size else None
+        res = func(df[count], sizes) if needs_size else func(df[count])
     except ValueError as exc:
         return title, go.Figure(), _error(exc)
     v = res["violations"]
@@ -702,10 +742,10 @@ def msa_columns(data):
     df = _df(data)
     cols = df.columns.tolist()
     numeric = df.select_dtypes("number").columns.tolist()
-    ops = [{"label": "(nenhum: estudo tipo 3)", "value": ""}] + [{"label": c, "value": c} for c in cols]
-    return (cols, _pick(cols, "peça", "peca", "part", default=cols[0]),
+    ops = [{"label": "(nenhum: estudo tipo 3)", "value": ""}] + _options(data, cols)
+    return (_options(data, cols), _pick(cols, "peça", "peca", "part", default=cols[0]),
             ops, _pick(cols, "oper", "apprais", default=""),
-            numeric, _pick(numeric, "medi", "measure", "resp", default=numeric[-1] if numeric else None))
+            _options(data, numeric), _pick(numeric, "medi", "measure", "resp", default=numeric[-1] if numeric else None))
 
 
 @app.callback(
@@ -787,7 +827,7 @@ def doe_columns(data):
     design_cols = {"StdOrder", "RunOrder", "CenterPt", "PtType", "Blocks"}
     candidates = [c for c in numeric if c not in design_cols]
     response = candidates[-1] if candidates else None
-    return numeric, response, numeric, [c for c in candidates if c != response]
+    return _options(data, numeric), response, _options(data, numeric), [c for c in candidates if c != response]
 
 
 @app.callback(
