@@ -25,6 +25,7 @@ def test_menu_has_at_most_three_levels_below_top():
 
 def test_paths_are_slugs():
     assert "/estat/cartas-de-controle/cartas-de-atributos/p-de-laney" in ITEMS
+    assert "/assistente/doe/planejar-e-criar" in ITEMS
     assert ITEMS["/estat/cartas-de-controle/cartas-de-variaveis-para-subgrupos/xbarra-r"].page == "xbar-r"
 
 

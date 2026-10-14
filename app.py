@@ -256,7 +256,7 @@ def home_page():
              for it in available]
     return html.Div([
         html.H1("Análises disponíveis", className="text-2xl font-semibold mb-2"),
-        html.P(f"{len(available)} de {len(ITEMS)} itens dos menus Calc, Estat e Gráfico do Minitab já têm tela. "
+        html.P(f"{len(available)} de {len(ITEMS)} itens dos menus do Minitab já têm tela. "
                "Os demais aparecem nos menus como “em breve”.", className="text-sm text-slate-600 mb-6"),
         html.Div(cards, className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"),
     ])
@@ -300,7 +300,7 @@ def capability_page(item, _arg):
 
 
 def imr_page(item, _arg):
-    return html.Div([_page_header(item, "Carta I-MR"), _two_columns(
+    return html.Div([_page_header(item, "Carta I-AM (valores individuais e amplitude móvel)"), _two_columns(
         _card([_data_panel("imr"), _dropdown("imr-col", "Variável")]),
         _section("Valores individuais", _graph("imr-i"), html.Div(id="imr-summary", className="text-sm")),
         _section("Amplitude móvel", _graph("imr-mr")),

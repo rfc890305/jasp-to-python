@@ -14,7 +14,7 @@ Objetivos do projeto:
 
 ```
 app.py                  Interface web (Dash + Tailwind CSS), expõe `server` para o gunicorn
-menu.py                 Menus Calc, Estat e Gráfico no estilo do Minitab (o que tem tela e o que está "em breve")
+menu.py                 Menus Dados, Calc, Estat, Gráfico e Assistente no estilo do Minitab (o que tem tela e o que está "em breve")
 backend/                Cálculos estatísticos puros, sem dependência de interface
   descriptives.py       Estatística descritiva (jaspDescriptives)
   quality/              Controle de qualidade / Six Sigma (jaspQualityControl)
