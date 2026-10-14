@@ -52,12 +52,12 @@ EXAMPLES = {
     "doe": DATA_DIR / "exemplo_doe.csv",
 }
 ATTRIBUTE_CHARTS = {
-    "p": ("Carta p (proporção de defeituosos)", p_chart, True),
-    "np": ("Carta np (nº de defeituosos)", np_chart, True),
-    "c": ("Carta c (nº de defeitos)", c_chart, False),
-    "u": ("Carta u (defeitos por unidade)", u_chart, True),
-    "laney_p": ("Carta p' de Laney", laney_p_chart, True),
-    "laney_u": ("Carta u' de Laney", laney_u_chart, True),
+    "p": ("Carta P (proporção por subgrupo)", p_chart, True),
+    "np": ("Carta NP (contagem por subgrupo)", np_chart, True),
+    "c": ("Carta C (contagem, área de inspeção constante)", c_chart, False),
+    "u": ("Carta U (contagem por unidade)", u_chart, True),
+    "laney_p": ("Carta P' de Laney", laney_p_chart, True),
+    "laney_u": ("Carta U' de Laney", laney_u_chart, True),
 }
 CONSTANT = "__constante__"  # opção de tamanho de amostra fixo nas cartas por atributos
 DOE_DESIGNS = {"factorial": "Fatorial 2 níveis", "ccd": "Composto central (CCD)", "bbd": "Box-Behnken"}
@@ -66,7 +66,7 @@ JASP_STATUS = {
     "🟡": "Existe em parte no JASP: parte será migrada e o restante desenvolvido.",
     "⬜": "Não existe no JASP: será desenvolvido do zero em Python.",
 }
-FIG_LAYOUT = {"margin": {"l": 40, "r": 10, "t": 10, "b": 40}, "template": "plotly_white", "height": 360}
+FIG_LAYOUT = {"margin": {"l": 40, "r": 10, "t": 10, "b": 40}, "template": "plotly_white", "height": 440}
 
 app = dash.Dash(
     __name__,
@@ -130,9 +130,10 @@ def _graph(id_):
 
 
 def _two_columns(side, *main):
-    return html.Div(className="grid gap-6 md:grid-cols-3", children=[
+    # Painel de dados estreito à esquerda; o resto da largura fica para os gráficos
+    return html.Div(className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]", children=[
         html.Div(side, className="grid gap-6 content-start"),
-        html.Div(className="md:col-span-2 grid gap-6 content-start", children=list(main)),
+        html.Div(className="grid gap-6 content-start min-w-0", children=list(main)),
     ])
 
 
@@ -332,14 +333,12 @@ def attr_page(item, chart_type):
     return html.Div([_page_header(item, ATTRIBUTE_CHARTS[chart_type][0]), _two_columns(
         _card([
             _data_panel("attr"),
-            _dropdown("attr-type", "Carta", value=chart_type,
-                      options=[{"label": v[0], "value": k} for k, v in ATTRIBUTE_CHARTS.items()]),
-            _dropdown("attr-count", "Coluna de contagem"),
+            dcc.Store(id="attr-type", data=chart_type),  # a carta vem do item de menu escolhido
+            _dropdown("attr-count", "Variável (contagem por subgrupo)"),
             html.Div(id="attr-size-box", children=[
-                _dropdown("attr-size", "Tamanho da amostra (coluna ou constante)"),
-                html.Div(id="attr-n-box", children=_number_input("attr-n", "Tamanho constante de cada subgrupo", 1)),
+                _dropdown("attr-size", "Tamanhos dos subgrupos (coluna ou constante)"),
+                html.Div(id="attr-n-box", children=_number_input("attr-n", "Tamanho constante", 1)),
             ]),
-            html.P(id="attr-help", className="text-xs text-slate-500 mb-3"),
         ]),
         _card([
             html.H2(id="attr-title", className="font-semibold mb-3"),
@@ -435,12 +434,15 @@ app.layout = html.Div(
     children=[
         dcc.Location(id="url"),
         dcc.Store(id="dataset", storage_type="session"),
-        html.Header(
-            dcc.Link(html.H1("Análises estatísticas · JASP em Python", className="text-xl font-semibold"), href="/"),
-            className="bg-slate-900 text-white px-6 py-4",
-        ),
-        _menu_bar(),
-        html.Main(id="page", className="max-w-6xl mx-auto p-6"),
+        # Cabeçalho e menus ficam fixos no topo ao rolar a página
+        html.Div(className="sticky top-0 z-50", children=[
+            html.Header(
+                dcc.Link(html.H1("Análises estatísticas · JASP em Python", className="text-xl font-semibold"), href="/"),
+                className="bg-slate-900 text-white px-6 py-3",
+            ),
+            _menu_bar(),
+        ]),
+        html.Main(id="page", className="max-w-[1800px] mx-auto px-6 py-6"),
     ],
 )
 
@@ -673,27 +675,17 @@ def xbar_analyse(data, cols, size):
 @app.callback(
     Output("attr-count", "options"), Output("attr-count", "value"),
     Output("attr-size", "options"), Output("attr-size", "value"),
-    Output("attr-count-label", "children"), Output("attr-size-box", "style"), Output("attr-help", "children"),
-    Input("attr-data", "data"), Input("attr-type", "value"),
+    Output("attr-size-box", "style"),
+    Input("attr-data", "data"), Input("attr-type", "data"),
 )
 def attr_columns(data, chart_type):
     cols = _numeric(data)
     defects = chart_type in ("c", "u", "laney_u")
     count = _pick(cols, *(("defeitos", "defects") if defects else ("defeituos", "defective")), default=cols[-1] if cols else None)
     size = _pick(cols, "inspec", "tamanho", "size", default=CONSTANT)
-    needs_size = ATTRIBUTE_CHARTS[chart_type][2]
-    if defects:
-        label = "Coluna com o nº de defeitos por subgrupo"
-        help_ = "Defeitos: falhas contadas (uma peça pode ter várias)."
-    else:
-        label = "Coluna com o nº de peças defeituosas por subgrupo"
-        help_ = "Defeituosos: peças reprovadas (no máximo o tamanho da amostra)."
-    if needs_size:
-        help_ += " Tamanho da amostra: quantas peças foram inspecionadas em cada subgrupo."
-    else:
-        help_ += " A carta c supõe a mesma área de inspeção em todos os subgrupos e não usa tamanho de amostra."
+    needs_size = ATTRIBUTE_CHARTS[chart_type][2]  # a carta c não usa tamanho de subgrupo
     sizes = _options(data, cols) + [{"label": "Mesmo tamanho em todos os subgrupos (constante)", "value": CONSTANT}]
-    return _options(data, cols), count, sizes, size, label, None if needs_size else {"display": "none"}, help_
+    return _options(data, cols), count, sizes, size, None if needs_size else {"display": "none"}
 
 
 @app.callback(Output("attr-n-box", "style"), Input("attr-size", "value"))
@@ -703,7 +695,7 @@ def attr_constant_size(size):
 
 @app.callback(
     Output("attr-title", "children"), Output("attr-graph", "figure"), Output("attr-summary", "children"),
-    Input("attr-data", "data"), Input("attr-type", "value"),
+    Input("attr-data", "data"), Input("attr-type", "data"),
     Input("attr-count", "value"), Input("attr-size", "value"), Input("attr-n", "value"),
 )
 def attr_analyse(data, chart_type, count, size, constant):
